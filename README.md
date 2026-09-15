@@ -49,3 +49,4 @@ flet build apk --project FinanLY --product "FinanLY" --org com.finanly
 ## Licencia
 
 MIT
+# FinanLY
