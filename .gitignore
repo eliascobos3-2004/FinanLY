@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Flet / build output
+build/
+.flet/
+*.apk
+*.aab
+*.ipa
+
+# Local SQLite data
+*.db
+*.sqlite3
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.log
