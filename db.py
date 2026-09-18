@@ -51,8 +51,13 @@ class DatabaseManager:
         return conn
 
     def init_db(self) -> None:
-        """Crea las tablas e índices si aún no existen."""
+        """Crea la base de datos, tablas e índices necesarios para FinanLY.
+
+        Este punto es fundamental: aquí se define la estructura local que almacena
+        cuentas, transacciones, categorías y los resúmenes financieros del usuario.
+        """
         with self._connect() as conn:
+            # Tabla principal de cuentas: nombre, saldo inicial e icono.
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cuentas (
@@ -64,6 +69,7 @@ class DatabaseManager:
                 """
             )
 
+            # Tabla de movimientos: ingresos y egresos con su fecha, nota y categoría.
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS transacciones (
@@ -96,7 +102,72 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_transacciones_fecha ON transacciones(fecha)"
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS categorias (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT NOT NULL,
+                    tipo TEXT NOT NULL CHECK (tipo IN ('ingreso', 'gasto')),
+                    es_default INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(nombre, tipo)
+                )
+                """
+            )
+
             conn.commit()
+            self._ensure_default_categories()
+
+    def _ensure_default_categories(self) -> None:
+        """Crea categorías base para ingresos y gastos si aún no existen."""
+        defaults = {
+            "ingreso": ["Sueldo", "Freelance", "Inversión", "Regalo", "Otros"],
+            "gasto": ["Comida", "Transporte", "Servicios", "Salud", "Educación", "Hogar", "Entretenimiento", "Ahorros", "Otros"],
+        }
+
+        with self._connect() as conn:
+            for tipo, categorias in defaults.items():
+                for nombre in categorias:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO categorias (nombre, tipo, es_default)
+                        VALUES (?, ?, 1)
+                        """,
+                        (nombre, tipo),
+                    )
+            conn.commit()
+
+    def list_categories(self, tipo: Optional[str] = None) -> List[str]:
+        """Devuelve categorías disponibles, ordenadas por nombre."""
+        query = "SELECT nombre FROM categorias"
+        params: List[Any] = []
+        if tipo:
+            query += " WHERE tipo = ?"
+            params.append(tipo)
+        query += " ORDER BY es_default DESC, nombre ASC"
+
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [row["nombre"] for row in rows]
+
+    def add_custom_category(self, nombre: str, tipo: str) -> str:
+        """Añade una categoría personalizada y la devuelve normalizada."""
+        if tipo not in ("ingreso", "gasto"):
+            raise ValueError("El tipo debe ser 'ingreso' o 'gasto'.")
+
+        categoria = (nombre or "").strip()
+        if not categoria:
+            raise ValueError("La categoría no puede estar vacía.")
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO categorias (nombre, tipo, es_default)
+                VALUES (?, ?, 0)
+                """,
+                (categoria, tipo),
+            )
+            conn.commit()
+        return categoria
 
     # ------------------------------------------------------------------
     # CRUD de cuentas
@@ -227,11 +298,13 @@ class DatabaseManager:
         categoria: Optional[str] = None,
         cuenta_id: Optional[int] = None,
         mes: Optional[str] = None,
+        fecha: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[sqlite3.Row]:
         """Lista transacciones con filtros opcionales.
 
         Ejemplo de mes: '2026-09'.
+        Ejemplo de fecha: '2026-09-17'.
         """
         query = """
             SELECT t.*, c.nombre AS nombre_cuenta
@@ -252,6 +325,10 @@ class DatabaseManager:
         if cuenta_id is not None:
             query += " AND t.cuenta_id = ?"
             params.append(cuenta_id)
+
+        if fecha:
+            query += " AND t.fecha = ?"
+            params.append(fecha)
 
         if mes:
             query += " AND strftime('%Y-%m', t.fecha) = ?"
@@ -435,6 +512,23 @@ class DatabaseManager:
         with self._connect() as conn:
             return conn.execute(query, params).fetchall()
 
+    def get_daily_totals(self, year: int, month: int) -> List[sqlite3.Row]:
+        """Devuelve por día los ingresos y gastos del mes indicado."""
+        mes = f"{year:04d}-{month:02d}"
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT strftime('%d', fecha) AS dia,
+                       COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) AS ingresos,
+                       COALESCE(SUM(CASE WHEN tipo = 'gasto' THEN monto ELSE 0 END), 0) AS gastos
+                FROM transacciones
+                WHERE strftime('%Y-%m', fecha) = ?
+                GROUP BY strftime('%Y-%m-%d', fecha)
+                ORDER BY dia ASC
+                """,
+                (mes,),
+            ).fetchall()
+
     def get_monthly_comparison(self, year: int) -> List[sqlite3.Row]:
         """Genera comparación mensual de ingresos vs gastos para un año concreto."""
         with self._connect() as conn:
@@ -469,76 +563,16 @@ class DatabaseManager:
         }
 
     def seed_demo_data(self) -> None:
-        """Inserta datos de prueba para validar la app rápidamente.
+        """Queda deshabilitado para mantener el arranque limpio y transparente.
 
-        Es opcional y útil durante desarrollo para verificar que todo funciona.
+        La app debe empezar desde cero y respetar exactamente lo que el usuario crea o borra.
         """
-        with self._connect() as conn:
-            cuenta_existente = conn.execute(
-                "SELECT COUNT(*) AS total FROM cuentas"
-            ).fetchone()["total"]
-
-            if int(cuenta_existente) > 0:
-                return
-
-        self.create_account("Efectivo", 2500.0, "💵")
-        self.create_account("Banco", 12000.0, "🏦")
-        self.create_account("Tarjeta", 0.0, "💳")
-
-        cuentas = self.list_accounts()
-        efectivo_id = next(c["id"] for c in cuentas if c["nombre"] == "Efectivo")
-        banco_id = next(c["id"] for c in cuentas if c["nombre"] == "Banco")
-        tarjeta_id = next(c["id"] for c in cuentas if c["nombre"] == "Tarjeta")
-
-        # Ingresos
-        self.create_transaction(
-            tipo="ingreso",
-            monto=3500.0,
-            categoria="Sueldo",
-            cuenta_id=banco_id,
-            fecha="2026-09-01",
-            nota="Pago mensual",
-        )
-        self.create_transaction(
-            tipo="ingreso",
-            monto=250.0,
-            categoria="Freelance",
-            cuenta_id=efectivo_id,
-            fecha="2026-09-08",
-            nota="Trabajo extra",
-        )
-
-        # Gastos
-        self.create_transaction(
-            tipo="gasto",
-            monto=420.0,
-            categoria="Comida",
-            cuenta_id=tarjeta_id,
-            fecha="2026-09-03",
-            nota="Supermercado",
-        )
-        self.create_transaction(
-            tipo="gasto",
-            monto=180.0,
-            categoria="Transporte",
-            cuenta_id=efectivo_id,
-            fecha="2026-09-06",
-            nota="Gasolina",
-        )
-        self.create_transaction(
-            tipo="gasto",
-            monto=320.0,
-            categoria="Servicios",
-            cuenta_id=banco_id,
-            fecha="2026-09-10",
-            nota="Internet y luz",
-        )
+        return
 
 
 if __name__ == "__main__":
-    """Prueba rápida del módulo: crea una base de datos demo y muestra el resumen."""
+    """Prueba rápida del módulo en estado vacío."""
     db = DatabaseManager("finanly_demo.db")
-    db.seed_demo_data()
 
     print("Cuentas:")
     for cuenta in db.list_accounts():
