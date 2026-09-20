@@ -79,7 +79,8 @@ class TransactionsScreen(BaseScreen):
             self.page.update()
 
         def open_date_selection(_):
-            self.app.open_date_picker(fecha_field, fecha_field.value)
+            # pasar apply_filters como callback para que al seleccionar fecha se apliquen filtros
+            self.app.open_date_picker(fecha_field, fecha_field.value, on_select=apply_filters)
 
         apply_filters(None)
 

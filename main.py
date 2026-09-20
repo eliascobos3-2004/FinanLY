@@ -51,14 +51,7 @@ class FinanLYApp:
         self.transactions_filter_date = datetime.date.today().isoformat()
         self.transactions_filter_category = "todos"
         self.transactions_filter_account = "todos"
-        self.date_picker_target = None
-        self.date_picker = ft.DatePicker(
-            first_date=datetime.date(2020, 1, 1),
-            last_date=datetime.date(2100, 12, 31),
-            value=datetime.date.today(),
-            on_change=self._handle_date_picker_change,
-        )
-        self.page.overlay.append(self.date_picker)
+        # Not using calendar widget; we show a small dialog with day/month/year selectors instead
         self.content = ft.Container(
             expand=True,
             padding=0,
@@ -87,23 +80,31 @@ class FinanLYApp:
         self.sidebar_collapsed_width = self.sidebar.collapsed_width
         self.sidebar_container = self.sidebar.container
 
-        self.main_column = ft.Column(
+        # Contenido principal desplazable con espacio reservado para la barra
+        # inferior fija. Sin este padding, la barra se superpone sobre los
+        # títulos y el contenido final de cada pantalla.
+        self.main_list = ft.ListView(
             expand=True,
             spacing=0,
+            padding=ft.Padding(bottom=110),
             controls=[
                 self.header_bar,
                 ft.Container(expand=True, content=self.content, padding=0, margin=0, alignment=ft.Alignment(0, 0)),
             ],
         )
 
-        self.body_row = ft.Row(
-            expand=True,
-            spacing=0,
-            alignment=ft.MainAxisAlignment.START,
-            vertical_alignment=ft.CrossAxisAlignment.START,
-            controls=[self.sidebar_container, ft.Container(expand=True, content=self.main_column, padding=0, margin=0)],
-        )
-        self.page.add(self.body_row)
+        # Añadir solo el contenido principal; la barra inferior se dibuja como
+        # overlay flotante, pero ahora dejamos margen inferior en la vista.
+        self.page.add(self.main_list)
+
+        try:
+            self.sidebar.container.alignment = ft.Alignment(0, 1)
+            self.sidebar.container.expand = False
+            self.sidebar.container.bottom = 18
+            self.page.overlay.append(self.sidebar.container)
+        except Exception:
+            self.page.overlay.append(self.sidebar.container)
+
         self.render()
 
     def debug(self, message: str):
@@ -117,11 +118,12 @@ class FinanLYApp:
         self.page.update()
 
     def toggle_sidebar(self, e=None):
-        """Expande o contrae el sidebar lateral para ahorrar espacio en móvil."""
-        self.sidebar_extended = not self.sidebar_extended
-        self.nav.extended = self.sidebar_extended
-        self.nav.label_type = ft.NavigationRailLabelType.ALL if self.sidebar_extended else ft.NavigationRailLabelType.NONE
-        self.sidebar_container.width = self.sidebar_width if self.sidebar_extended else self.sidebar_collapsed_width
+        """Muestra/oculta el comportamiento extendido de la barra inferior."""
+        try:
+            self.sidebar.toggle()
+        except Exception:
+            # Si el sidebar no implementa toggle exactamente, mantener compatibilidad
+            self.sidebar_extended = not self.sidebar_extended
         self.page.update()
 
     def on_nav_change(self, e):
@@ -141,32 +143,155 @@ class FinanLYApp:
         self.page.update()
 
     def _handle_date_picker_change(self, e):
-        """Cuando el usuario elige una fecha, la refleja en el campo que la solicitó."""
+        """Cuando el usuario elige una fecha, la refleja en el campo que la solicitó.
+
+        Si se proporcionó un callback en `open_date_picker`, también se invoca
+        para que la pantalla pueda aplicar filtros automáticamente.
+        """
         if self.date_picker_target is not None:
             self.date_picker_target.value = self.date_picker.value.isoformat()
-            self.date_picker_target.update()
+            try:
+                self.date_picker_target.update()
+            except Exception:
+                pass
+
+        # Llamar callback si existe
+        cb = getattr(self, "_date_picker_callback", None)
+        if callable(cb):
+            try:
+                cb()
+            except Exception:
+                pass
+
+        # limpiar callback
+        if hasattr(self, "_date_picker_callback"):
+            delattr(self, "_date_picker_callback")
+
         self.page.update()
 
     def money(self, value: float) -> str:
         """Formatea un número como moneda local con dos decimales."""
         return f"${value:,.2f}"
 
-    def open_date_picker(self, target_field, default_date: Optional[str] = None):
-        """Abre el calendario y lo vincula a un campo de texto de fecha."""
-        self.date_picker_target = target_field
-        if default_date:
+    def open_date_picker(self, target_field, default_date: Optional[str] = None, on_select: Optional[callable] = None):
+        """Muestra un diálogo con selectores de día/mes/año y devuelve la fecha seleccionada.
+
+        Esto reemplaza el DatePicker nativo para evitar dependencias de versión y
+        permite filtrar mediante `on_select` tras confirmar.
+        """
+        # parsear fecha por defecto
+        try:
+            if default_date:
+                d = datetime.date.fromisoformat(default_date)
+            else:
+                d = datetime.date.today()
+        except Exception:
+            d = datetime.date.today()
+
+        day_field = ft.Dropdown(
+            value=str(d.day),
+            width=120,
+            height=52,
+            options=[ft.DropdownOption(str(i), text=str(i)) for i in range(1, 32)],
+            text_style=ft.TextStyle(size=16),
+        )
+        month_field = ft.Dropdown(
+            value=str(d.month),
+            width=150,
+            height=52,
+            options=[ft.DropdownOption(str(i), text=datetime.date(2000, i, 1).strftime('%B')) for i in range(1, 13)],
+            text_style=ft.TextStyle(size=16),
+        )
+        # años: últimos 5 años hasta el próximo año
+        today = datetime.date.today()
+        years = list(range(today.year - 5, today.year + 2))
+        year_field = ft.Dropdown(
+            value=str(d.year),
+            width=140,
+            height=52,
+            options=[ft.DropdownOption(str(y), text=str(y)) for y in years],
+            text_style=ft.TextStyle(size=16),
+        )
+
+        error_text = ft.Text("", color=ft.Colors.ERROR)
+
+        def confirm(_):
             try:
-                self.date_picker.value = datetime.date.fromisoformat(default_date)
-            except ValueError:
-                self.date_picker.value = datetime.date.today()
-        else:
-            self.date_picker.value = datetime.date.today()
+                dy = int(day_field.value)
+                mo = int(month_field.value)
+                yr = int(year_field.value)
+                sel = datetime.date(yr, mo, dy)
+                iso = sel.isoformat()
+                target_field.value = iso
+                try:
+                    target_field.update()
+                except Exception:
+                    pass
+                if callable(on_select):
+                    try:
+                        on_select(None)
+                    except Exception:
+                        pass
+                self.close_dialog(dialog)
+                self.page.update()
+            except Exception as exc:
+                error_text.value = "Fecha inválida"
+                self.page.update()
 
-        if self.date_picker not in self.page.overlay:
-            self.page.overlay.append(self.date_picker)
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Seleccionar fecha", size=22, weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                width=440,
+                padding=12,
+                content=ft.Column(
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=16,
+                    controls=[
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            spacing=14,
+                            controls=[
+                                ft.Column(
+                                    spacing=8,
+                                    controls=[
+                                        ft.Text("Día", size=16, weight=ft.FontWeight.W_600),
+                                        day_field,
+                                    ],
+                                ),
+                                ft.Column(
+                                    spacing=8,
+                                    controls=[
+                                        ft.Text("Mes", size=16, weight=ft.FontWeight.W_600),
+                                        month_field,
+                                    ],
+                                ),
+                                ft.Column(
+                                    spacing=8,
+                                    controls=[
+                                        ft.Text("Año", size=16, weight=ft.FontWeight.W_600),
+                                        year_field,
+                                    ],
+                                ),
+                            ],
+                        ),
+                        error_text,
+                    ],
+                ),
+            ),
+            actions=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=16,
+                    controls=[
+                        ft.TextButton("Cancelar", on_click=lambda e: self.close_dialog(dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                        ft.FilledButton("Aceptar", on_click=confirm, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12))),
+                    ],
+                )
+            ],
+        )
 
-        self.date_picker.open = True
-        self.page.update()
+        self.open_dialog(dialog)
 
     def _build_modal_container(self, title: str, content_controls, save_callback=None, width: int = 420):
         """Crea un contenedor modal estándar para formularios y vistas rápidas."""
@@ -981,6 +1106,8 @@ class FinanLYApp:
 
                 self.close_dialog(dialog)
                 self.show_message("Cuenta guardada.")
+                # ir automáticamente a la pestaña Cuentas
+                self.tab_index = 2
                 self.render()
             except ValueError as exc:
                 error_text.value = str(exc)

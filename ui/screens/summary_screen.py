@@ -50,7 +50,11 @@ class SummaryScreen(BaseScreen):
     def _build_daily_flow_chart(self, daily):
         if not daily:
             return ft.Text("Sin movimientos para este mes.", color=ft.Colors.SECONDARY)
+        # Normalizar el ancho del slot de cada día y mostrar barras (incluso si 0$)
+        max_slot_width = 340
+        slot_half = int(max_slot_width / 2) - 6
 
+        # determinar el máximo absoluto para escalar proporcionalmente dentro de cada mitad
         max_value = max(max(float(item["ingresos"]), float(item["gastos"])) for item in daily)
         max_value = max_value if max_value > 0 else 1
 
@@ -58,36 +62,41 @@ class SummaryScreen(BaseScreen):
         for item in daily:
             ingreso = float(item["ingresos"])
             gasto = float(item["gastos"])
-            ingreso_pct = max(ingreso / max_value, 0.0)
-            gasto_pct = max(gasto / max_value, 0.0)
 
-            green_bar = ft.Container(
-                width=170 * ingreso_pct if ingreso > 0 else 0,
-                height=24,
+            ingreso_fill_width = max(2, int(slot_half * (ingreso / max_value))) if max_value > 0 else 2
+            gasto_fill_width = max(2, int(slot_half * (gasto / max_value))) if max_value > 0 else 2
+
+            ingreso_frame = ft.Container(
+                width=slot_half,
+                height=28,
                 border_radius=10,
-                bgcolor="#22c55e",
-                padding=ft.Padding(left=8, right=8),
-                content=ft.Text(self.finance.money(ingreso), size=11, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
+                bgcolor="#1f2937",
+                content=ft.Stack(
+                    controls=[
+                        ft.Container(width=ingreso_fill_width, height=28, border_radius=10, bgcolor="#22c55e"),
+                        ft.Container(padding=ft.Padding(left=8), content=ft.Text(self.finance.money(ingreso), size=11, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600)),
+                    ]
+                ),
             )
-            red_bar = ft.Container(
-                width=170 * gasto_pct if gasto > 0 else 0,
-                height=24,
+
+            gasto_frame = ft.Container(
+                width=slot_half,
+                height=28,
                 border_radius=10,
-                bgcolor="#f87171",
-                padding=ft.Padding(left=8, right=8),
-                content=ft.Text(self.finance.money(gasto), size=11, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
+                bgcolor="#1f2937",
+                content=ft.Stack(
+                    controls=[
+                        ft.Container(width=gasto_fill_width, height=28, border_radius=10, bgcolor="#f87171"),
+                        ft.Container(padding=ft.Padding(left=8), content=ft.Text(self.finance.money(gasto), size=11, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600)),
+                    ]
+                ),
             )
 
             rows.append(
                 ft.Row(
                     controls=[
-                        ft.Text(str(item["dia"]), color=ft.Colors.SECONDARY, size=12, width=26),
-                        ft.Row(
-                            controls=[green_bar, red_bar],
-                            spacing=6,
-                            alignment=ft.MainAxisAlignment.START,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
+                        ft.Container(width=30, content=ft.Text(str(item["dia"]), color=ft.Colors.SECONDARY, size=12)),
+                        ft.Row(controls=[ingreso_frame, ft.Container(width=6), gasto_frame], spacing=6),
                     ],
                     spacing=10,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
