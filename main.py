@@ -51,6 +51,8 @@ class FinanLYApp:
         self.transactions_filter_date = datetime.date.today().isoformat()
         self.transactions_filter_category = "todos"
         self.transactions_filter_account = "todos"
+        self.summary_year = datetime.date.today().year
+        self.summary_month = datetime.date.today().month
         # Not using calendar widget; we show a small dialog with day/month/year selectors instead
         self.content = ft.Container(
             expand=True,
@@ -79,6 +81,7 @@ class FinanLYApp:
         self.sidebar_width = self.sidebar.width
         self.sidebar_collapsed_width = self.sidebar.collapsed_width
         self.sidebar_container = self.sidebar.container
+        self._apply_responsive_layout()
 
         # Contenido principal desplazable con espacio reservado para la barra
         # inferior fija. Sin este padding, la barra se superpone sobre los
@@ -106,6 +109,27 @@ class FinanLYApp:
             self.page.overlay.append(self.sidebar.container)
 
         self.render()
+
+    def responsive_width(self, base: int = 420, minimum: int = 300) -> int:
+        """Devuelve un ancho útil para móvil sin desbordar el contenido."""
+        try:
+            page_width = float(getattr(self.page, "width", 0) or 0)
+        except Exception:
+            page_width = 0
+
+        if page_width and page_width > 0:
+            available = page_width - 32
+            return int(max(minimum, min(base, available)))
+        return base
+
+    def _apply_responsive_layout(self):
+        """Ajusta el ancho del sidebar y de los modales a la pantalla."""
+        try:
+            if self.page.width and self.page.width > 0:
+                sidebar_width = min(500, max(340, int(self.page.width - 20)))
+                self.sidebar.container.width = sidebar_width
+        except Exception:
+            pass
 
     def debug(self, message: str):
         """Imprime mensajes de depuración del flujo de la app."""
@@ -179,6 +203,8 @@ class FinanLYApp:
         Esto reemplaza el DatePicker nativo para evitar dependencias de versión y
         permite filtrar mediante `on_select` tras confirmar.
         """
+        dialog_width = self.responsive_width(440, minimum=320)
+
         # parsear fecha por defecto
         try:
             if default_date:
@@ -242,15 +268,15 @@ class FinanLYApp:
             modal=True,
             title=ft.Text("Seleccionar fecha", size=22, weight=ft.FontWeight.BOLD),
             content=ft.Container(
-                width=440,
+                width=dialog_width,
                 padding=12,
                 content=ft.Column(
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=16,
                     controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.CENTER,
-                            spacing=14,
+                        ft.Column(
+                            spacing=12,
+                            width=dialog_width - 30,
                             controls=[
                                 ft.Column(
                                     spacing=8,
@@ -293,9 +319,99 @@ class FinanLYApp:
 
         self.open_dialog(dialog)
 
+    def open_summary_period_dialog(self, year: Optional[int] = None, month: Optional[int] = None):
+        """Abre un modal para elegir el mes y año del resumen."""
+        selected_year = int(year or self.summary_year)
+        selected_month = int(month or self.summary_month)
+        dialog_width = self.responsive_width(440, minimum=320)
+
+        month_field = ft.Dropdown(
+            value=str(selected_month),
+            width=160,
+            height=52,
+            options=[ft.DropdownOption(str(i), text=datetime.date(2000, i, 1).strftime('%B')) for i in range(1, 13)],
+            text_style=ft.TextStyle(size=16),
+        )
+        years = list(range(datetime.date.today().year - 5, datetime.date.today().year + 2))
+        year_field = ft.Dropdown(
+            value=str(selected_year),
+            width=120,
+            height=52,
+            options=[ft.DropdownOption(str(y), text=str(y)) for y in years],
+            text_style=ft.TextStyle(size=16),
+        )
+
+        def apply_period(_):
+            self.summary_year = int(year_field.value)
+            self.summary_month = int(month_field.value)
+            self.close_dialog(dialog)
+            self.render()
+
+        summary = self.db.get_month_summary(selected_year, selected_month)
+        daily = self.db.get_daily_totals(selected_year, selected_month)
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            bgcolor="#1c2434",
+            content_padding=20,
+            title=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Text("Mes y año", size=min(28, max(20, int(dialog_width * 0.08))), weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda _: self._modal_action("X", dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                ],
+            ),
+            content=ft.Container(
+                width=dialog_width,
+                content=ft.Column(
+                    tight=True,
+                    spacing=12,
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Column(controls=[ft.Text("Mes", color=ft.Colors.SECONDARY), month_field], spacing=6),
+                                ft.Column(controls=[ft.Text("Año", color=ft.Colors.SECONDARY), year_field], spacing=6),
+                            ],
+                            wrap=True,
+                            spacing=10,
+                        ),
+                        ft.Row(
+                            controls=[
+                                ft.Text("Ingresos", color=ft.Colors.GREEN, weight=ft.FontWeight.W_600),
+                                ft.Text(self.money(summary["ingresos"]), color=ft.Colors.WHITE),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        ft.Row(
+                            controls=[
+                                ft.Text("Gastos", color=ft.Colors.RED, weight=ft.FontWeight.W_600),
+                                ft.Text(self.money(summary["gastos"]), color=ft.Colors.WHITE),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        ft.Text("Evolución diaria", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        self._build_daily_flow_chart(daily),
+                    ],
+                ),
+            ),
+            actions=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=16,
+                    controls=[
+                        ft.TextButton("Cancelar", on_click=lambda e: self.close_dialog(dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                        ft.FilledButton("Aceptar", on_click=apply_period, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12))),
+                    ],
+                )
+            ],
+        )
+        self.open_dialog(dialog)
+
     def _build_modal_container(self, title: str, content_controls, save_callback=None, width: int = 420):
         """Crea un contenedor modal estándar para formularios y vistas rápidas."""
         dialog_holder = {"dialog": None}
+        dialog_width = self.responsive_width(width, minimum=300)
 
         def close_current(_=None):
             self.close_dialog(dialog_holder["dialog"])
@@ -304,7 +420,7 @@ class FinanLYApp:
         if save_callback is not None:
             actions.append(
                 ft.Container(
-                    alignment=ft.alignment.center_right,
+                    alignment=ft.Alignment(1, 0.5),
                     content=ft.IconButton(
                         icon=ft.Icons.SAVE_ALT_ROUNDED,
                         tooltip="Guardar",
@@ -312,6 +428,17 @@ class FinanLYApp:
                         icon_color=ft.Colors.WHITE,
                         bgcolor="#3b82f6",
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    ),
+                )
+            )
+        else:
+            actions.append(
+                ft.Container(
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.TextButton(
+                        "Cerrar",
+                        on_click=close_current,
+                        style=ft.ButtonStyle(color=ft.Colors.WHITE),
                     ),
                 )
             )
@@ -324,12 +451,12 @@ class FinanLYApp:
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Text(title, size=30, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    ft.Text(title, size=min(30, max(22, int(dialog_width * 0.08))), weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                     ft.IconButton(icon=ft.Icons.CLOSE, on_click=close_current, style=ft.ButtonStyle(color=ft.Colors.WHITE)),
                 ],
             ),
             content=ft.Container(
-                width=width,
+                width=dialog_width,
                 padding=10,
                 content=ft.Column(
                     tight=True,
@@ -745,24 +872,28 @@ class FinanLYApp:
                 error_text.value = "No se pudo guardar la transacción."
                 self.page.update()
 
+        dialog_width = self.responsive_width(420, minimum=300)
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Row(
+                width=dialog_width,
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Text("Registrar movimiento", size=26, weight=ft.FontWeight.BOLD),
+                    ft.Text("Registrar movimiento", size=min(26, max(20, int(dialog_width * 0.08))), weight=ft.FontWeight.BOLD),
                     ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda _: self._modal_action("X", dialog)),
                 ],
             ),
             content=ft.Container(
-                width=420,
+                width=dialog_width,
                 content=ft.Column(
                     tight=True,
+                    spacing=12,
                     controls=[
-                        ft.Row(controls=[ft.Text("Tipo"), tipo_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Row(controls=[ft.Text("Categoría"), categoria_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Column(controls=[ft.Text("Tipo", color=ft.Colors.SECONDARY), tipo_field], spacing=6),
+                        ft.Column(controls=[ft.Text("Categoría", color=ft.Colors.SECONDARY), categoria_field], spacing=6),
                         custom_categoria_field,
-                        ft.Row(controls=[ft.Text("Cuenta"), account_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Column(controls=[ft.Text("Cuenta", color=ft.Colors.SECONDARY), account_field], spacing=6),
                         amount_field,
                         date_field_row,
                         note_field,
@@ -771,10 +902,16 @@ class FinanLYApp:
                 ),
             ),
             actions=[
-                ft.IconButton(
-                    icon=ft.Icons.SAVE_ALT_ROUNDED,
-                    tooltip="Guardar",
-                    on_click=lambda e: save(e),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    controls=[
+                        ft.TextButton("Cerrar", on_click=lambda _: self._modal_action("CERRAR", dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                        ft.IconButton(
+                            icon=ft.Icons.SAVE_ALT_ROUNDED,
+                            tooltip="Guardar",
+                            on_click=lambda e: save(e),
+                        )
+                    ],
                 )
             ],
         )
@@ -1005,24 +1142,28 @@ class FinanLYApp:
             spacing=6,
         )
 
+        dialog_width = self.responsive_width(420, minimum=300)
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Row(
+                width=dialog_width,
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Text("Editar transacción" if edit_tx else "Nueva transacción", size=26, weight=ft.FontWeight.BOLD),
+                    ft.Text("Editar transacción" if edit_tx else "Nueva transacción", size=min(26, max(20, int(dialog_width * 0.08))), weight=ft.FontWeight.BOLD),
                     ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda _: self._modal_action("X", dialog)),
                 ],
             ),
             content=ft.Container(
-                width=420,
+                width=dialog_width,
                 content=ft.Column(
                     tight=True,
+                    spacing=12,
                     controls=[
-                        ft.Row(controls=[ft.Text("Tipo"), tipo_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Row(controls=[ft.Text("Categoría"), categoria_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Column(controls=[ft.Text("Tipo", color=ft.Colors.SECONDARY), tipo_field], spacing=6),
+                        ft.Column(controls=[ft.Text("Categoría", color=ft.Colors.SECONDARY), categoria_field], spacing=6),
                         custom_categoria_field,
-                        ft.Row(controls=[ft.Text("Cuenta"), account_field], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Column(controls=[ft.Text("Cuenta", color=ft.Colors.SECONDARY), account_field], spacing=6),
                         amount_field,
                         date_field_row,
                         note_field,
@@ -1030,7 +1171,15 @@ class FinanLYApp:
                     ],
                 ),
             ),
-            actions=[ft.IconButton(icon=ft.Icons.SAVE_ALT_ROUNDED, tooltip="Guardar", on_click=lambda e: submit(e))],
+            actions=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    controls=[
+                        ft.TextButton("Cerrar", on_click=lambda _: self._modal_action("CERRAR", dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                        ft.IconButton(icon=ft.Icons.SAVE_ALT_ROUNDED, tooltip="Guardar", on_click=lambda e: submit(e)),
+                    ],
+                )
+            ],
         )
         self.open_dialog(dialog)
 
@@ -1088,7 +1237,16 @@ class FinanLYApp:
         edit_account = self.db.get_account(account_id) if account_id else None
         name_field = ft.TextField(label="Nombre", value=edit_account["nombre"] if edit_account else "")
         balance_field = ft.TextField(label="Saldo inicial", value=str(edit_account["saldo_inicial"]) if edit_account else "", keyboard_type=ft.KeyboardType.NUMBER)
-        icon_field = ft.TextField(label="Icono", value=edit_account["icono"] if edit_account else "💰")
+        icon_field = ft.Dropdown(
+            label="Icono",
+            value=edit_account["icono"] if edit_account else "💰",
+            width=220,
+            options=[
+                ft.DropdownOption("💰", text="Bolsa de dinero"),
+                ft.DropdownOption("👛", text="Billetera"),
+                ft.DropdownOption("🏦", text="Banco"),
+            ],
+        )
         error_text = ft.Text("", color=ft.Colors.ERROR)
 
         def submit(e):
@@ -1116,20 +1274,36 @@ class FinanLYApp:
                 error_text.value = "No se pudo guardar la cuenta."
                 self.page.update()
 
+        dialog_width = self.responsive_width(360, minimum=300)
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Row(
+                width=dialog_width,
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Text("Editar cuenta" if edit_account else "Nueva cuenta", size=26, weight=ft.FontWeight.BOLD),
+                    ft.Text("Editar cuenta" if edit_account else "Nueva cuenta", size=min(26, max(20, int(dialog_width * 0.08))), weight=ft.FontWeight.BOLD),
                     ft.IconButton(icon=ft.Icons.CLOSE, on_click=lambda _: self._modal_action("X", dialog)),
                 ],
             ),
             content=ft.Container(
-                width=360,
-                content=ft.Column(tight=True, controls=[name_field, balance_field, icon_field, error_text]),
+                width=dialog_width,
+                content=ft.Column(tight=True, spacing=12, controls=[
+                    ft.Column(controls=[ft.Text("Nombre", color=ft.Colors.SECONDARY), name_field], spacing=6),
+                    ft.Column(controls=[ft.Text("Saldo inicial", color=ft.Colors.SECONDARY), balance_field], spacing=6),
+                    ft.Column(controls=[ft.Text("Icono", color=ft.Colors.SECONDARY), icon_field], spacing=6),
+                    error_text,
+                ]),
             ),
-            actions=[ft.IconButton(icon=ft.Icons.SAVE_ALT_ROUNDED, tooltip="Guardar", on_click=lambda e: submit(e))],
+            actions=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    controls=[
+                        ft.TextButton("Cerrar", on_click=lambda _: self._modal_action("CERRAR", dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                        ft.IconButton(icon=ft.Icons.SAVE_ALT_ROUNDED, tooltip="Guardar", on_click=lambda e: submit(e)),
+                    ],
+                )
+            ],
         )
         self.open_dialog(dialog)
 

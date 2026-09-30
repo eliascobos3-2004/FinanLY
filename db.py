@@ -299,12 +299,14 @@ class DatabaseManager:
         cuenta_id: Optional[int] = None,
         mes: Optional[str] = None,
         fecha: Optional[str] = None,
+        anio: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[sqlite3.Row]:
         """Lista transacciones con filtros opcionales.
 
         Ejemplo de mes: '2026-09'.
         Ejemplo de fecha: '2026-09-17'.
+        Ejemplo de año: '2026'.
         """
         query = """
             SELECT t.*, c.nombre AS nombre_cuenta
@@ -333,6 +335,10 @@ class DatabaseManager:
         if mes:
             query += " AND strftime('%Y-%m', t.fecha) = ?"
             params.append(mes)
+
+        if anio:
+            query += " AND strftime('%Y', t.fecha) = ?"
+            params.append(str(anio))
 
         query += " ORDER BY t.fecha DESC, t.id DESC"
 

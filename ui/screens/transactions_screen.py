@@ -10,28 +10,97 @@ from ui.screens.base_screen import BaseScreen
 class TransactionsScreen(BaseScreen):
     def render(self):
         accounts = self.db.list_accounts()
-        fecha_field = ft.TextField(label="Fecha", value=datetime.date.today().isoformat(), read_only=True, width=220)
+        today = datetime.date.today()
 
-        category_filter = ft.Dropdown(
-            value="todos",
-            width=220,
-            options=[ft.DropdownOption("todos", text="Todas las categorías")] + [ft.DropdownOption(nombre, text=nombre) for nombre in self.db.list_categories()],
-        )
-
-        account_filter = ft.Dropdown(
-            value="todos",
-            width=220,
-            options=[ft.DropdownOption("todos", text="Todas las cuentas")] + [ft.DropdownOption(str(a["id"]), text=a["nombre"]) for a in accounts],
-        )
+        selected_month = f"{today.year:04d}-{today.month:02d}"
+        selected_category = "todos"
+        selected_account = "todos"
 
         summary_text = ft.Text("0 movimientos • Ingresos $0.00 • Gastos $0.00", color=ft.Colors.SECONDARY)
         list_view = ft.ListView(expand=True, spacing=8, auto_scroll=True)
 
-        def apply_filters(_):
-            fecha = fecha_field.value or datetime.date.today().isoformat()
-            categoria = None if category_filter.value == "todos" else category_filter.value
-            cuenta_id = None if account_filter.value == "todos" else int(account_filter.value)
-            rows = self.db.list_transactions(categoria=categoria, cuenta_id=cuenta_id, fecha=fecha)
+        def build_filter_dialog():
+            month_field = ft.Dropdown(
+                value=selected_month,
+                width=180,
+                options=[
+                    ft.DropdownOption(f"{today.year:04d}-{m:02d}", text=datetime.date(today.year, m, 1).strftime("%B %Y"))
+                    for m in range(1, 13)
+                ],
+            )
+            category_field = ft.Dropdown(
+                value=selected_category,
+                width=220,
+                options=[ft.DropdownOption("todos", text="Todas las categorías")] + [ft.DropdownOption(nombre, text=nombre) for nombre in self.db.list_categories()],
+            )
+            account_field = ft.Dropdown(
+                value=selected_account,
+                width=220,
+                options=[ft.DropdownOption("todos", text="Todas las cuentas")] + [ft.DropdownOption(str(a["id"]), text=a["nombre"]) for a in accounts],
+            )
+
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Filtrar movimientos", size=22, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    width=420,
+                    padding=12,
+                    content=ft.Column(
+                        spacing=16,
+                        controls=[
+                            ft.Column(
+                                spacing=8,
+                                controls=[
+                                    ft.Text("Mes", color=ft.Colors.SECONDARY),
+                                    month_field,
+                                ],
+                            ),
+                            ft.Column(
+                                spacing=8,
+                                controls=[
+                                    ft.Text("Categoría", color=ft.Colors.SECONDARY),
+                                    category_field,
+                                ],
+                            ),
+                            ft.Column(
+                                spacing=8,
+                                controls=[
+                                    ft.Text("Cuenta", color=ft.Colors.SECONDARY),
+                                    account_field,
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                actions=[
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=16,
+                        controls=[
+                            ft.TextButton("Cancelar", on_click=lambda e: self.app.close_dialog(dialog), style=ft.ButtonStyle(color=ft.Colors.WHITE)),
+                            ft.FilledButton(
+                                "Aplicar",
+                                on_click=lambda e: apply_filter_state(month_field.value, category_field.value, account_field.value, dialog),
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                            ),
+                        ],
+                    )
+                ],
+            )
+            return dialog
+
+        def apply_filter_state(month_value, category_value, account_value, dialog=None):
+            nonlocal selected_month, selected_category, selected_account
+            selected_month = month_value or selected_month
+            selected_category = category_value or selected_category
+            selected_account = account_value or selected_account
+
+            if dialog is not None:
+                self.app.close_dialog(dialog)
+
+            categoria = None if selected_category == "todos" else selected_category
+            cuenta_id = None if selected_account == "todos" else int(selected_account)
+            rows = self.db.list_transactions(categoria=categoria, cuenta_id=cuenta_id, mes=selected_month)
 
             total_ingreso = sum(float(r["monto"]) for r in rows if r["tipo"] == "ingreso")
             total_gasto = sum(float(r["monto"]) for r in rows if r["tipo"] == "gasto")
@@ -46,7 +115,10 @@ class TransactionsScreen(BaseScreen):
                                 padding=12,
                                 content=ft.Row(
                                     controls=[
-                                        ft.Icon(ft.Icons.ARROW_DOWNWARD_ROUNDED if r["tipo"] == "ingreso" else ft.Icons.ARROW_UPWARD_ROUNDED, color=ft.Colors.GREEN if r["tipo"] == "ingreso" else ft.Colors.RED),
+                                        ft.Icon(
+                                            ft.Icons.ARROW_DOWNWARD_ROUNDED if r["tipo"] == "ingreso" else ft.Icons.ARROW_UPWARD_ROUNDED,
+                                            color=ft.Colors.GREEN if r["tipo"] == "ingreso" else ft.Colors.RED,
+                                        ),
                                         ft.Column(
                                             expand=True,
                                             controls=[
@@ -78,11 +150,11 @@ class TransactionsScreen(BaseScreen):
             list_view.controls = list_controls
             self.page.update()
 
-        def open_date_selection(_):
-            # pasar apply_filters como callback para que al seleccionar fecha se apliquen filtros
-            self.app.open_date_picker(fecha_field, fecha_field.value, on_select=apply_filters)
+        def open_filter_modal(_):
+            dialog = build_filter_dialog()
+            self.app.open_dialog(dialog)
 
-        apply_filters(None)
+        apply_filter_state(selected_month, selected_category, selected_account)
 
         return ft.Column(
             expand=True,
@@ -93,22 +165,18 @@ class TransactionsScreen(BaseScreen):
                 ft.FilledButton("Nueva transacción", icon=ft.Icons.ADD, on_click=lambda e: self.app.open_transaction_dialog()),
                 ft.Row(
                     controls=[
-                        ft.Container(
-                            expand=True,
-                            content=ft.Row(
-                                controls=[
-                                    ft.Text("Fecha", width=80),
-                                    fecha_field,
-                                    ft.IconButton(icon=ft.Icons.CALENDAR_MONTH, on_click=open_date_selection),
-                                ],
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            ),
-                        ),
+                        ft.FilledButton("Filtrar", icon=ft.Icons.FILTER_ALT_OUTLINED, on_click=open_filter_modal),
                     ],
+                    alignment=ft.MainAxisAlignment.START,
                 ),
-                ft.Row(controls=[category_filter, account_filter], wrap=True),
-                ft.OutlinedButton("Aplicar filtros", on_click=apply_filters),
                 summary_text,
-                list_view,
+                ft.Container(
+                    expand=True,
+                    height=360,
+                    border_radius=16,
+                    padding=10,
+                    bgcolor="#0f172a",
+                    content=list_view,
+                ),
             ],
         )

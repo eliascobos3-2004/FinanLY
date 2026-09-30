@@ -87,17 +87,17 @@ class HomeScreen(BaseScreen):
             today_list = [ft.Text("Hoy no hay transacciones.", color=ft.Colors.SECONDARY)]
 
         def open_today_transactions(_):
-            dialog = self.app._build_modal_container(
-                "Transacciones de hoy",
-                [
+            content = ft.Column(
+                tight=True,
+                spacing=8,
+                controls=[
                     ft.Text(f"Fecha: {hoy.isoformat()}", color=ft.Colors.SECONDARY),
-                    ft.Container(
-                        padding=8,
-                        content=ft.Column(controls=today_list if trans_hoy else [ft.Text("No hay movimientos hoy.", color=ft.Colors.SECONDARY)])
-                    )
+                    *today_list,
                 ],
-                width=430,
             )
+            if not trans_hoy:
+                content.controls = [ft.Text("No hay movimientos hoy.", color=ft.Colors.SECONDARY)]
+            dialog = self.app._build_modal_container("Transacciones de hoy", [content], width=430)
             self.app.open_dialog(dialog)
 
         return ft.Column(
