@@ -56,7 +56,7 @@ class SummaryScreen(BaseScreen):
         screen_width = float(getattr(self.page, "width", 0) or 360)
         chart_width = max(280, min(420, screen_width - 42))
         slot_width = max(220, chart_width - 60)
-        half = (slot_width - 10) / 2
+        half = max(100, (slot_width - 18) / 2)
 
         max_value = max(max(float(item["ingresos"]), float(item["gastos"])) for item in daily)
         max_value = max_value if max_value > 0 else 1
@@ -65,30 +65,26 @@ class SummaryScreen(BaseScreen):
         for item in daily:
             ingreso = float(item["ingresos"])
             gasto = float(item["gastos"])
-            ingreso_width = max(2, int((half * (ingreso / max_value)) if ingreso > 0 else 0))
-            gasto_width = max(2, int((half * (gasto / max_value)) if gasto > 0 else 0))
+            ingreso_width = max(58, int((half * (ingreso / max_value)) if ingreso > 0 else 0))
+            gasto_width = max(58, int((half * (gasto / max_value)) if gasto > 0 else 0))
 
             ingreso_bar = ft.Container(
                 width=ingreso_width,
                 height=24,
                 border_radius=10,
                 bgcolor="#22c55e",
-                content=ft.Container(
-                    alignment=ft.Alignment(1, 0.5),
-                    padding=ft.Padding(left=4, right=4),
-                    content=ft.Text(self.finance.money(ingreso), size=10, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
-                ),
+                padding=ft.Padding(left=6, right=6),
+                alignment=ft.Alignment(1, 0.5),
+                content=ft.Text(self.finance.money(ingreso), size=10, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
             )
             gasto_bar = ft.Container(
                 width=gasto_width,
                 height=24,
                 border_radius=10,
                 bgcolor="#f87171",
-                content=ft.Container(
-                    alignment=ft.Alignment(1, 0.5),
-                    padding=ft.Padding(left=4, right=4),
-                    content=ft.Text(self.finance.money(gasto), size=10, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
-                ),
+                padding=ft.Padding(left=6, right=6),
+                alignment=ft.Alignment(1, 0.5),
+                content=ft.Text(self.finance.money(gasto), size=10, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
             )
 
             rows.append(
@@ -247,17 +243,23 @@ class SummaryScreen(BaseScreen):
             spacing=20,
             scroll=ft.ScrollMode.ADAPTIVE,
             controls=[
-                ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ft.Column(
                     controls=[
-                        ft.Text(f"Resumen • {datetime.date(selected_year, selected_month, 1).strftime('%B %Y').title()}", size=title_size, weight=ft.FontWeight.BOLD),
-                        ft.IconButton(
+                        ft.Text("Resumen", size=title_size, weight=ft.FontWeight.BOLD),
+                        ft.Text(
+                            datetime.date(selected_year, selected_month, 1).strftime("%B %Y").title(),
+                            size=max(18, title_size - 10),
+                            color=ft.Colors.WHITE,
+                        ),
+                        ft.FilledButton(
+                            "Elegir mes",
                             icon=ft.Icons.CALENDAR_MONTH,
-                            tooltip="Seleccionar mes",
                             on_click=lambda _: self.app.open_summary_period_dialog(selected_year, selected_month),
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                         ),
                     ],
+                    spacing=8,
+                    horizontal_alignment=ft.CrossAxisAlignment.START,
                 ),
                 ft.Text("Métricas clave del periodo seleccionado.", size=16, color=ft.Colors.SECONDARY),
                 ft.Row(controls=cards, wrap=True, spacing=12, run_spacing=12),
